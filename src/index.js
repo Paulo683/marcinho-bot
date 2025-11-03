@@ -23,7 +23,8 @@ const client = new Client({
 
 const queue = new Map();
 
-client.once("clientReady", () => {
+// ✅ Evento correto
+client.once("ready", () => {
   console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
 
@@ -36,7 +37,8 @@ client.on("messageCreate", async (message) => {
     const args = message.content.split(" ");
     let query = args.slice(1).join(" ");
 
-    if (!query) return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul");
+    if (!query)
+      return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul");
 
     const voiceChannel = message.member?.voice.channel;
     if (!voiceChannel)
@@ -217,4 +219,5 @@ async function playNext(guildId) {
   }
 }
 
+// ✅ login com variável de ambiente certa
 client.login(process.env.DISCORD_TOKEN);
