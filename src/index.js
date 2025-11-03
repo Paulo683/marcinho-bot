@@ -23,7 +23,6 @@ const client = new Client({
 
 const queue = new Map();
 
-// ✅ Evento correto
 client.once("ready", () => {
   console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
@@ -32,95 +31,98 @@ client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
   const serverQueue = queue.get(message.guild.id);
 
-  // ---------- !play ----------
-  if (message.content.startsWith("!play")) {
-    const args = message.content.split(" ");
-    let query = args.slice(1).join(" ");
+ // ---------- !play ----------
+if (message.content.startsWith("!play")) {
+  const args = message.content.split(" ");
+  let query = args.slice(1).join(" ");
 
-    if (!query)
-      return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul");
+  if (!query)
+    return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul");
 
-    const voiceChannel = message.member?.voice.channel;
-    if (!voiceChannel)
-      return message.reply("🎧 Larga de ser imbecil, e entra em uma call antes!!");
+  const voiceChannel = message.member?.voice.channel;
+  if (!voiceChannel)
+    return message.reply("🎧 Larga de ser imbecil, e entra em uma call antes!!");
 
-    let url;
+  let url;
 
-    if (query.startsWith("http")) {
-      url = query;
-    } else {
-      try {
-        const result = await yts.searchOne(query);
-        if (!result) return message.reply("❌ Não achei essa música, corno triste.");
-        url = `https://www.youtube.com/watch?v=${result.id}`;
-        query = result.title;
-      } catch (err) {
-        console.error("Erro ao pesquisar no YouTube:", err);
-        return message.reply("😵‍💫 O Marcinho ficou tonto e não achou nada, véi!");
-      }
-    }
-
-    let serverQueue = queue.get(message.guild.id);
-
-    if (!serverQueue) {
-      const connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId: message.guild.id,
-        adapterCreator: message.guild.voiceAdapterCreator,
-      });
-
-      const player = createAudioPlayer();
-      const newQueue = {
-        voiceChannel,
-        connection,
-        songs: [],
-        player,
-        nowPlaying: null,
-      };
-
-      queue.set(message.guild.id, newQueue);
-      serverQueue = newQueue;
-
-      connection.subscribe(player);
-      player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
-    }
-
+  if (query.startsWith("http")) {
+    url = query;
+  } else {
     try {
-      const info = await ytdl.getInfo(url);
-      const title = info.videoDetails.title;
-      const thumbnail = info.videoDetails.thumbnails[0].url;
-      const durationSec = parseInt(info.videoDetails.lengthSeconds);
-      const minutes = Math.floor(durationSec / 60);
-      const seconds = durationSec % 60;
-      const duration = `${minutes}:${seconds.toString().padStart(2, "0")}`;
-
-      serverQueue.songs.push({
-        url,
-        title,
-        thumbnail,
-        duration,
-        user: message.author.username,
-      });
-
-      const embed = new EmbedBuilder()
-        .setColor(0xffcc00)
-        .setTitle("🎶 Adicionado à Fila!")
-        .setDescription(
-          `**${title}**\n⏱️ Duração: **${duration}**\nPedido por **${message.author.username}**`
-        )
-        .setThumbnail(thumbnail)
-        .setFooter({ text: "Marcinho Cachaçeiro 🍺" });
-
-      message.reply({ embeds: [embed] });
-
-      if (serverQueue.songs.length === 1 && !serverQueue.nowPlaying) {
-        playNext(message.guild.id);
-      }
-    } catch (error) {
-      console.error("Erro ao adicionar música:", error);
-      message.reply("❌ Ih rapaz... Marcinho não conseguiu adicionar isso aí não!");
+      const results = await yts.search(query, { limit: 1 });
+      if (!results || results.length === 0)
+        return message.reply("❌ Não achei essa música, corno triste.");
+      const result = results[0];
+      url = `https://www.youtube.com/watch?v=${result.id}`;
+      query = result.title;
+    } catch (err) {
+      console.error("Erro ao pesquisar no YouTube:", err);
+      return message.reply("😵‍💫 O Marcinho ficou tonto e não achou nada, véi!");
     }
   }
+
+  let serverQueue = queue.get(message.guild.id);
+
+  if (!serverQueue) {
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: message.guild.id,
+      adapterCreator: message.guild.voiceAdapterCreator,
+    });
+
+    const player = createAudioPlayer();
+    const newQueue = {
+      voiceChannel,
+      connection,
+      songs: [],
+      player,
+      nowPlaying: null,
+    };
+
+    queue.set(message.guild.id, newQueue);
+    serverQueue = newQueue;
+
+    connection.subscribe(player);
+    player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
+  }
+
+  try {
+    const info = await ytdl.getInfo(url);
+    const title = info.videoDetails.title;
+    const thumbnail = info.videoDetails.thumbnails[0].url;
+    const durationSec = parseInt(info.videoDetails.lengthSeconds);
+    const minutes = Math.floor(durationSec / 60);
+    const seconds = durationSec % 60;
+    const duration = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+
+    serverQueue.songs.push({
+      url,
+      title,
+      thumbnail,
+      duration,
+      user: message.author.username,
+    });
+
+    const embed = new EmbedBuilder()
+      .setColor(0xffcc00)
+      .setTitle("🎶 Adicionado à Fila!")
+      .setDescription(
+        `**${title}**\n⏱️ Duração: **${duration}**\nPedido por **${message.author.username}**`
+      )
+      .setThumbnail(thumbnail)
+      .setFooter({ text: "Marcinho Cachaçeiro 🍺" });
+
+    message.reply({ embeds: [embed] });
+
+    if (serverQueue.songs.length === 1 && !serverQueue.nowPlaying) {
+      playNext(message.guild.id);
+    }
+  } catch (error) {
+    console.error("Erro ao adicionar música:", error);
+    message.reply("❌ Ih rapaz... Marcinho não conseguiu adicionar isso aí não!");
+  }
+}
+
 
   // ---------- !skip ----------
   if (message.content === "!skip") {
@@ -166,7 +168,7 @@ client.on("messageCreate", async (message) => {
           "🛑 `!stop` — para tudo e vaza da call\n\n" +
           "Chama tua cremosa e vem pro boteco do Marcinho 🍻"
       )
-      .setFooter({ text: "Versão 1.6 — Tempo total incluído 🍹" });
+      .setFooter({ text: "Versão 1.7 — Stream fixado 🍹" });
 
     message.reply({ embeds: [embed] });
   }
@@ -189,8 +191,12 @@ async function playNext(guildId) {
     const stream = ytdl(song.url, {
       filter: "audioonly",
       quality: "highestaudio",
-      dlChunkSize: 0,
-      highWaterMark: 1 << 27,
+      highWaterMark: 1 << 25,
+      requestOptions: {
+        headers: {
+          "User-Agent": "Mozilla/5.0",
+        },
+      },
     });
 
     const resource = createAudioResource(stream);
