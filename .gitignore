@@ -1,3 +1,6 @@
+node_modules/
+.env
+
 git rm --cached .env
 git add .gitignore
 git commit -m "fix: remove .env from git tracking"
