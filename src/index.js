@@ -22,6 +22,7 @@ const client = new Client({
 
 const queue = new Map();
 
+// ✅ Evento de inicialização
 client.once("ready", () => {
   console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
@@ -33,54 +34,63 @@ client.on("messageCreate", async (message) => {
   // ---------- !play ----------
   if (message.content.startsWith("!play")) {
     const args = message.content.split(" ");
-    const query = args.slice(1).join(" ");
+    let query = args.slice(1).join(" ");
 
     if (!query)
-      return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul!");
+      return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul");
 
     const voiceChannel = message.member?.voice.channel;
     if (!voiceChannel)
       return message.reply("🎧 Larga de ser imbecil, e entra em uma call antes!!");
 
-    let serverQueue = queue.get(message.guild.id);
-
-    if (!serverQueue) {
-      const connection = joinVoiceChannel({
-        channelId: voiceChannel.id,
-        guildId: message.guild.id,
-        adapterCreator: message.guild.voiceAdapterCreator,
-      });
-
-      const player = createAudioPlayer();
-      const newQueue = {
-        voiceChannel,
-        connection,
-        songs: [],
-        player,
-        nowPlaying: null,
-      };
-
-      queue.set(message.guild.id, newQueue);
-      serverQueue = newQueue;
-
-      connection.subscribe(player);
-      player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
-    }
+    let url, videoInfo;
 
     try {
-      const searchResult = await play.search(query, { limit: 1 });
-      if (!searchResult.length)
-        return message.reply("❌ Não achei essa música, corno triste!");
+      // Se for link direto
+      if (play.yt_validate(query) === "video") {
+        url = query;
+        videoInfo = await play.video_info(url);
+      } else {
+        // Pesquisa no YouTube
+        const search = await play.search(query, { limit: 1 });
+        if (!search || !search.length)
+          return message.reply("❌ Não achei essa música, corno triste.");
+        videoInfo = await play.video_info(search[0].url);
+        url = search[0].url;
+      }
 
-      const song = searchResult[0];
-      const title = song.title;
-      const url = song.url;
-      const thumbnail = song.thumbnails[0].url || "";
-      const duration = song.durationInSec
-        ? `${Math.floor(song.durationInSec / 60)}:${String(
-            song.durationInSec % 60
-          ).padStart(2, "0")}`
-        : "??:??";
+      const title = videoInfo.video_details.title;
+      const thumbnail = videoInfo.video_details.thumbnails[0].url;
+      const durationSec = parseInt(videoInfo.video_details.durationInSec);
+      const minutes = Math.floor(durationSec / 60);
+      const seconds = durationSec % 60;
+      const duration = `${minutes}:${seconds.toString().padStart(2, "0")}`;
+
+      let serverQueue = queue.get(message.guild.id);
+
+      // Cria a fila e player se não existir
+      if (!serverQueue) {
+        const connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: message.guild.id,
+          adapterCreator: message.guild.voiceAdapterCreator,
+        });
+
+        const player = createAudioPlayer();
+        const newQueue = {
+          voiceChannel,
+          connection,
+          songs: [],
+          player,
+          nowPlaying: null,
+        };
+
+        queue.set(message.guild.id, newQueue);
+        serverQueue = newQueue;
+
+        connection.subscribe(player);
+        player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
+      }
 
       serverQueue.songs.push({
         url,
@@ -101,12 +111,13 @@ client.on("messageCreate", async (message) => {
 
       message.reply({ embeds: [embed] });
 
+      // Se for a primeira música, toca já
       if (serverQueue.songs.length === 1 && !serverQueue.nowPlaying) {
         playNext(message.guild.id);
       }
-    } catch (error) {
-      console.error("Erro ao adicionar música:", error);
-      message.reply("❌ Ih rapaz... Marcinho não conseguiu achar essa não!");
+    } catch (err) {
+      console.error("Erro ao pesquisar ou adicionar:", err);
+      return message.reply("😵‍💫 O Marcinho ficou tonto e não achou nada, véi!");
     }
   }
 
@@ -154,13 +165,13 @@ client.on("messageCreate", async (message) => {
           "🛑 `!stop` — para tudo e vaza da call\n\n" +
           "Chama tua cremosa e vem pro boteco do Marcinho 🍻"
       )
-      .setFooter({ text: "Versão 1.7 — Agora busca decente 🍹" });
+      .setFooter({ text: "Versão 1.7 — Stream play-dl corrigido 🎧" });
 
     message.reply({ embeds: [embed] });
   }
 });
 
-// ---------- Função que toca a próxima música ----------
+// ---------- Função para tocar a próxima ----------
 async function playNext(guildId) {
   const serverQueue = queue.get(guildId);
   if (!serverQueue) return;
@@ -174,10 +185,14 @@ async function playNext(guildId) {
   }
 
   try {
-    const stream = await play.stream(song.url);
+    const ytInfo = await play.video_info(song.url);
+    const stream = await play.stream_from_info(ytInfo);
+
     const resource = createAudioResource(stream.stream, {
       inputType: stream.type,
+      inlineVolume: true,
     });
+
     serverQueue.player.play(resource);
     serverQueue.connection.subscribe(serverQueue.player);
     serverQueue.nowPlaying = song;
@@ -198,7 +213,11 @@ async function playNext(guildId) {
 
     if (textChannel) textChannel.send({ embeds: [embed] });
   } catch (err) {
-    console.error("Erro ao tocar:", err);
+    console.error("⚠️ Erro ao tocar:", err);
+    const textChannel = serverQueue.voiceChannel.guild.channels.cache.find(
+      (ch) => ch.isTextBased() && ch.permissionsFor(client.user).has("SendMessages")
+    );
+    if (textChannel) textChannel.send("❌ Deu ruim no stream, véi. Vou tentar a próxima...");
     playNext(guildId);
   }
 }
