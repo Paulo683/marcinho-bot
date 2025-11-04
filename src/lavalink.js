@@ -4,10 +4,11 @@ const LavalinkNodes = [
   {
     name: 'main',
     url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    auth: process.env.LAVALINK_PASSWORD,
+    authorization: process.env.LAVALINK_PASSWORD,
     secure: process.env.LAVALINK_SECURE === 'true'
   }
 ];
+
 
 export function createLavalink(client) {
   const shoukaku = new Shoukaku(
