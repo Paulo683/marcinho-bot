@@ -1,240 +1,178 @@
-import { Client, GatewayIntentBits, EmbedBuilder } from "discord.js";
-import {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  getVoiceConnection,
-  AudioPlayerStatus,
-} from "@discordjs/voice";
-import play from "play-dl";
-import dotenv from "dotenv";
+// src/index.js
+import 'dotenv/config';
+import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
+import { Manager } from 'erela.js';
 
-dotenv.config();
-
+// ---------- Client ----------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates,
   ],
 });
 
-const queue = new Map();
-
-// ✅ Evento de inicialização
-client.once("ready", () => {
-  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
+// ---------- Lavalink Manager ----------
+const manager = new Manager({
+  nodes: [
+    {
+      host: process.env.LAVALINK_HOST,
+      port: Number(process.env.LAVALINK_PORT || 2333),
+      password: process.env.LAVALINK_PASSWORD,
+      secure: String(process.env.LAVALINK_SECURE || 'false').toLowerCase() === 'true',
+    },
+  ],
+  send(id, payload) {
+    const guild = client.guilds.cache.get(id);
+    if (guild) guild.shard.send(payload);
+  },
 });
 
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
-  const serverQueue = queue.get(message.guild.id);
+// Logs úteis
+manager
+  .on('nodeConnect', node => console.log(`✅ Lavalink conectado: ${node.options.host}`))
+  .on('nodeError', (node, error) => console.log(`❌ Erro no node ${node.options.host}:`, error?.message || error))
+  .on('playerMove', (player, oldChannel, newChannel) => {
+    if (!newChannel) player.destroy();
+  });
 
-  // ---------- !play ----------
-  if (message.content.startsWith("!play")) {
-    const args = message.content.split(" ");
-    let query = args.slice(1).join(" ");
+// Player events (opcional, só pra log)
+manager
+  .on('trackStart', (player, track) => {
+    const channel = client.channels.cache.get(player.textChannel);
+    if (channel) {
+      const embed = new EmbedBuilder()
+        .setColor(0xff6600)
+        .setTitle('🎶 Tocando Agora!')
+        .setDescription(`**${track.title}**\n⏱️ **${msToTime(track.duration)}**\n🔗 [Abrir](${track.uri})`)
+        .setFooter({ text: 'Marcinho no comando 🎧' });
+      channel.send({ embeds: [embed] });
+    }
+  })
+  .on('queueEnd', player => {
+    const channel = client.channels.cache.get(player.textChannel);
+    if (channel) channel.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
+    player.destroy();
+  });
 
-    if (!query)
-      return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul");
+// Discord ready
+client.once('ready', () => {
+  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
+  manager.init(client.user.id);
+});
+
+// MUITO IMPORTANTE: repassar eventos "raw" ao manager
+client.on('raw', d => manager.updateVoiceState(d));
+
+// ---------- Comandos (simples) ----------
+client.on('messageCreate', async (message) => {
+  if (message.author.bot || !message.guild) return;
+
+  const content = message.content.trim();
+  const serverId = message.guild.id;
+
+  const serverPrefix = '!'; // mantém o seu prefixo
+
+  // !play <nome ou link>
+  if (content.startsWith(`${serverPrefix}play`)) {
+    const query = content.slice(`${serverPrefix}play`.length).trim();
+    if (!query) return message.reply('⚠️ Faltou o nome/link da música, jamanta azul!');
 
     const voiceChannel = message.member?.voice.channel;
-    if (!voiceChannel)
-      return message.reply("🎧 Larga de ser imbecil, e entra em uma call antes!!");
+    if (!voiceChannel) return message.reply('🎧 Entra em um canal de voz primeiro, abestado!');
 
-    let url, videoInfo;
+    // cria ou pega player
+    let player = manager.players.get(serverId);
+    if (!player) {
+      player = manager.create({
+        guild: serverId,
+        voiceChannel: voiceChannel.id,
+        textChannel: message.channel.id,
+        volume: 100,
+      });
+      player.connect();
+    } else if (player.voiceChannel !== voiceChannel.id) {
+      return message.reply('❌ Já tô tocando em outro canal, doidão.');
+    }
 
     try {
-      if (play.yt_validate(query) === "video") {
-        url = query;
-        videoInfo = await play.video_info(url);
+      const res = await manager.search(query, message.author);
+
+      if (res.loadType === 'LOAD_FAILED' || res.loadType === 'NO_MATCHES') {
+        return message.reply('❌ Não achei nada não, meu chapa.');
+      }
+
+      if (res.loadType === 'PLAYLIST_LOADED') {
+        for (const t of res.tracks) player.queue.add(t);
+        message.reply(`📚 Playlist **${res.playlist.name}** adicionada com **${res.tracks.length}** faixas.`);
       } else {
-        const search = await play.search(query, { limit: 1 });
-        if (!search || !search.length)
-          return message.reply("❌ Não achei essa música, corno triste.");
-        videoInfo = await play.video_info(search[0].url);
-        url = search[0].url;
+        const track = res.tracks[0];
+        player.queue.add(track);
+
+        const embed = new EmbedBuilder()
+          .setColor(0xffcc00)
+          .setTitle('🎶 Adicionado à Fila!')
+          .setDescription(`**${track.title}**\n⏱️ **${msToTime(track.duration)}**`)
+          .setFooter({ text: 'Marcinho Cachaçeiro 🍺' });
+
+        message.reply({ embeds: [embed] });
       }
 
-      const title = videoInfo.video_details.title;
-      const thumbnail = videoInfo.video_details.thumbnails[0].url;
-      const durationSec = parseInt(videoInfo.video_details.durationInSec);
-      const minutes = Math.floor(durationSec / 60);
-      const seconds = durationSec % 60;
-      const duration = `${minutes}:${seconds.toString().padStart(2, "0")}`;
-
-      let serverQueue = queue.get(message.guild.id);
-
-      if (!serverQueue) {
-        const connection = joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: message.guild.id,
-          adapterCreator: message.guild.voiceAdapterCreator,
-        });
-
-        const player = createAudioPlayer();
-        const newQueue = {
-          voiceChannel,
-          connection,
-          songs: [],
-          player,
-          nowPlaying: null,
-        };
-
-        queue.set(message.guild.id, newQueue);
-        serverQueue = newQueue;
-
-        connection.subscribe(player);
-        player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
-      }
-
-      serverQueue.songs.push({
-        url,
-        title,
-        thumbnail,
-        duration,
-        user: message.author.username,
-      });
-
-      const embed = new EmbedBuilder()
-        .setColor(0xffcc00)
-        .setTitle("🎶 Adicionado à Fila!")
-        .setDescription(
-          `**${title}**\n⏱️ Duração: **${duration}**\nPedido por **${message.author.username}**`
-        )
-        .setThumbnail(thumbnail)
-        .setFooter({ text: "Marcinho Cachaçeiro 🍺" });
-
-      message.reply({ embeds: [embed] });
-
-      if (serverQueue.songs.length === 1 && !serverQueue.nowPlaying) {
-        playNext(message.guild.id);
-      }
+      if (!player.playing && !player.paused) player.play();
     } catch (err) {
-      console.error("Erro ao pesquisar ou adicionar:", err);
-      return message.reply("😵‍💫 O Marcinho ficou tonto e não achou nada, véi!");
+      console.error('Erro no !play:', err);
+      message.reply('😵‍💫 O Marcinho bugou tentando tocar isso aí.');
     }
   }
 
-  // ---------- !skip ----------
-  if (message.content === "!skip") {
-    if (!serverQueue) return message.reply("❌ Tem porra nenhuma pra pular, mongo");
-    message.reply("⏭️ Apressadinho, ok, vou pular!");
-    playNext(message.guild.id);
+  // !skip
+  if (content === `${serverPrefix}skip`) {
+    const player = manager.players.get(serverId);
+    if (!player || !player.queue.current) return message.reply('❌ Tem porra nenhuma pra pular, mongo.');
+    player.stop();
+    message.reply('⏭️ Pulei. Próxima!');
   }
 
-  // ---------- !stop ----------
-  if (message.content === "!stop") {
-    if (!serverQueue) return message.reply("❌ Nem tava tocando nada krai");
-    serverQueue.songs = [];
-    serverQueue.player.stop();
-    const connection = getVoiceConnection(message.guild.id);
-    if (connection) connection.destroy();
-    queue.delete(message.guild.id);
-    message.reply("🛑 Fui pegar outra gelada, abraço!! 🍺");
+  // !stop
+  if (content === `${serverPrefix}stop`) {
+    const player = manager.players.get(serverId);
+    if (!player) return message.reply('❌ Nem tô tocando nada, krai.');
+    player.destroy();
+    message.reply('🛑 Parei tudo e saí do canal. Fui pegar outra gelada! 🍺');
   }
 
-  // ---------- !lista ----------
-  if (message.content === "!lista") {
-    if (!serverQueue || serverQueue.songs.length === 0) {
-      return message.reply("📭 A fila do Marcinho tá mais vazia que geladeira de solteiro!");
+  // !lista
+  if (content === `${serverPrefix}lista`) {
+    const player = manager.players.get(serverId);
+    if (!player || (!player.queue.current && !player.queue.length)) {
+      return message.reply('📭 A fila do Marcinho tá mais vazia que geladeira de solteiro!');
     }
 
-    let listaMsg = "🎧 **Fila do Marcinho Cachaçeiro:**\n\n";
-    serverQueue.songs.forEach((song, index) => {
-      listaMsg += `**${index + 1}.** ${song.title} (${song.duration}) — pedido por *${song.user}*\n`;
-    });
+    const current = player.queue.current
+      ? `**Tocando agora:** ${player.queue.current.title} (${msToTime(player.queue.current.duration)})\n`
+      : '';
 
-    message.reply(listaMsg);
-  }
+    const next = player.queue.length
+      ? player.queue.map((t, i) => `**${i + 1}.** ${t.title} (${msToTime(t.duration)})`).slice(0, 10).join('\n')
+      : '—';
 
-  // ---------- !help ----------
-  if (message.content === "!help") {
     const embed = new EmbedBuilder()
       .setColor(0x00cc99)
-      .setTitle("🍺 Marcinho Cachaçeiro — Manual do Corninho")
-      .setDescription(
-        "🎵 `!play <link ou nome>` — toca uma música do YouTube\n" +
-          "⏭️ `!skip` — pula pra próxima\n" +
-          "📜 `!lista` — mostra as músicas na fila\n" +
-          "🛑 `!stop` — para tudo e vaza da call\n\n" +
-          "Chama tua cremosa e vem pro boteco do Marcinho 🍻"
-      )
-      .setFooter({ text: "Versão 1.9 — Stream corrigido 🎧" });
+      .setTitle('🎧 Fila do Marcinho Cachaçeiro')
+      .setDescription(`${current}\n**Próximas:**\n${next}`)
+      .setFooter({ text: 'Vamo de música, bebê! 🍻' });
 
     message.reply({ embeds: [embed] });
   }
 });
 
-// ---------- Função que toca a próxima ----------
-async function playNext(guildId) {
-  const serverQueue = queue.get(guildId);
-  if (!serverQueue) return;
-
-  const song = serverQueue.songs.shift();
-  if (!song) {
-    const connection = getVoiceConnection(guildId);
-    if (connection) connection.destroy();
-    queue.delete(guildId);
-    return;
-  }
-
-  try {
-    // ✅ Correção: stream direto com play-dl
-    const stream = await play.stream(song.url, {
-      quality: 2,
-      discordPlayerCompatibility: true,
-    });
-
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type,
-      inlineVolume: true,
-    });
-
-    serverQueue.player.play(resource);
-    serverQueue.connection.subscribe(serverQueue.player);
-    serverQueue.nowPlaying = song;
-
-    const embed = new EmbedBuilder()
-      .setColor(0xff6600)
-      .setTitle("🎶 Tocando Agora!")
-      .setDescription(
-        `**${song.title}**\n⏱️ Duração: **${song.duration}**\nPedido por **${song.user}**`
-      )
-      .setThumbnail(song.thumbnail)
-      .setURL(song.url)
-      .setFooter({ text: "Marcinho no comando 🎧" });
-
-    const textChannel = serverQueue.voiceChannel.guild.channels.cache.find(
-      (ch) => ch.isTextBased() && ch.permissionsFor(client.user).has("SendMessages")
-    );
-
-    if (textChannel) textChannel.send({ embeds: [embed] });
-
-    // Logs
-    serverQueue.player.once(AudioPlayerStatus.Playing, () => {
-      console.log(`▶️ Tocando: ${song.title}`);
-    });
-
-    serverQueue.player.once(AudioPlayerStatus.Idle, () => {
-      console.log(`⏭️ Terminou: ${song.title}`);
-      playNext(guildId);
-    });
-  } catch (err) {
-    console.error("⚠️ Erro ao tocar:", err);
-
-    const textChannel = serverQueue.voiceChannel.guild.channels.cache.find(
-      (ch) => ch.isTextBased() && ch.permissionsFor(client.user).has("SendMessages")
-    );
-
-    if (textChannel)
-      textChannel.send(
-        `❌ **Erro ao tocar ${song.title}:**\n\`\`\`${err.message || err}\`\`\``
-      );
-
-    playNext(guildId);
-  }
+// utils
+function msToTime(ms) {
+  const s = Math.floor(ms / 1000);
+  const min = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${min}:${String(sec).padStart(2, '0')}`;
 }
 
 client.login(process.env.DISCORD_TOKEN);
