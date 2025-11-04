@@ -1,178 +1,193 @@
-// src/index.js
 import 'dotenv/config';
-import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
-import { Manager } from 'erela.js';
+import {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder
+} from 'discord.js';
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  getVoiceConnection
+} from '@discordjs/voice';
+import * as play from 'play-dl';
 
-// ---------- Client ----------
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates
   ],
 });
 
-// ---------- Lavalink Manager ----------
-const manager = new Manager({
-  nodes: [
-    {
-      host: process.env.LAVALINK_HOST,
-      port: Number(process.env.LAVALINK_PORT || 2333),
-      password: process.env.LAVALINK_PASSWORD,
-      secure: String(process.env.LAVALINK_SECURE || 'false').toLowerCase() === 'true',
-    },
-  ],
-  send(id, payload) {
-    const guild = client.guilds.cache.get(id);
-    if (guild) guild.shard.send(payload);
-  },
+const queues = new Map(); // guildId -> { connection, player, songs[], nowPlaying }
+
+client.once('ready', () => {
+  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
 
-// Logs úteis
-manager
-  .on('nodeConnect', node => console.log(`✅ Lavalink conectado: ${node.options.host}`))
-  .on('nodeError', (node, error) => console.log(`❌ Erro no node ${node.options.host}:`, error?.message || error))
-  .on('playerMove', (player, oldChannel, newChannel) => {
-    if (!newChannel) player.destroy();
-  });
+/** util: toca a próxima da fila */
+async function playNext(guildId, channelToNotify = null) {
+  const q = queues.get(guildId);
+  if (!q) return;
 
-// Player events (opcional, só pra log)
-manager
-  .on('trackStart', (player, track) => {
-    const channel = client.channels.cache.get(player.textChannel);
-    if (channel) {
+  const song = q.songs.shift();
+  if (!song) {
+    // acabou a fila → sair
+    q.player.stop();
+    const conn = getVoiceConnection(guildId);
+    if (conn) conn.destroy();
+    queues.delete(guildId);
+    if (channelToNotify) channelToNotify.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
+    return;
+  }
+
+  try {
+    // stream de áudio com play-dl
+    const stream = await play.stream(song.url, { quality: 2 }); // 2=high
+    const resource = createAudioResource(stream.stream, { inputType: stream.type });
+
+    q.player.play(resource);
+    q.nowPlaying = song;
+
+    // notifica
+    if (channelToNotify) {
       const embed = new EmbedBuilder()
         .setColor(0xff6600)
         .setTitle('🎶 Tocando Agora!')
-        .setDescription(`**${track.title}**\n⏱️ **${msToTime(track.duration)}**\n🔗 [Abrir](${track.uri})`)
-        .setFooter({ text: 'Marcinho no comando 🎧' });
-      channel.send({ embeds: [embed] });
+        .setDescription(`**${song.title}**\nPedido por **${song.user}**`)
+        .setURL(song.url)
+        .setThumbnail(song.thumbnail || null);
+
+      channelToNotify.send({ embeds: [embed] });
     }
-  })
-  .on('queueEnd', player => {
-    const channel = client.channels.cache.get(player.textChannel);
-    if (channel) channel.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
-    player.destroy();
-  });
+  } catch (err) {
+    console.error('Erro tocando stream:', err);
+    // tenta próxima
+    playNext(guildId, channelToNotify);
+  }
+}
 
-// Discord ready
-client.once('ready', () => {
-  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
-  manager.init(client.user.id);
-});
-
-// MUITO IMPORTANTE: repassar eventos "raw" ao manager
-client.on('raw', d => manager.updateVoiceState(d));
-
-// ---------- Comandos (simples) ----------
+/** comandos */
 client.on('messageCreate', async (message) => {
-  if (message.author.bot || !message.guild) return;
+  if (message.author.bot) return;
 
-  const content = message.content.trim();
-  const serverId = message.guild.id;
+  // !play <termo ou link>
+  if (message.content.startsWith('!play')) {
+    const args = message.content.split(' ').slice(1);
+    const query = args.join(' ');
+    if (!query) return message.reply('⚠️ Fala o nome ou link, jamanta azul.');
 
-  const serverPrefix = '!'; // mantém o seu prefixo
+    const voice = message.member?.voice?.channel;
+    if (!voice) return message.reply('🎧 Entra em um canal de voz primeiro!');
 
-  // !play <nome ou link>
-  if (content.startsWith(`${serverPrefix}play`)) {
-    const query = content.slice(`${serverPrefix}play`.length).trim();
-    if (!query) return message.reply('⚠️ Faltou o nome/link da música, jamanta azul!');
-
-    const voiceChannel = message.member?.voice.channel;
-    if (!voiceChannel) return message.reply('🎧 Entra em um canal de voz primeiro, abestado!');
-
-    // cria ou pega player
-    let player = manager.players.get(serverId);
-    if (!player) {
-      player = manager.create({
-        guild: serverId,
-        voiceChannel: voiceChannel.id,
-        textChannel: message.channel.id,
-        volume: 100,
+    // cria fila se não existir
+    let q = queues.get(message.guild.id);
+    if (!q) {
+      const connection = joinVoiceChannel({
+        channelId: voice.id,
+        guildId: message.guild.id,
+        adapterCreator: message.guild.voiceAdapterCreator
       });
-      player.connect();
-    } else if (player.voiceChannel !== voiceChannel.id) {
-      return message.reply('❌ Já tô tocando em outro canal, doidão.');
+      const player = createAudioPlayer();
+      connection.subscribe(player);
+
+      player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id, message.channel));
+      player.on('error', e => console.error('Player error:', e.message));
+
+      q = { connection, player, songs: [], nowPlaying: null };
+      queues.set(message.guild.id, q);
     }
 
     try {
-      const res = await manager.search(query, message.author);
+      let url = query;
+      let info;
 
-      if (res.loadType === 'LOAD_FAILED' || res.loadType === 'NO_MATCHES') {
-        return message.reply('❌ Não achei nada não, meu chapa.');
-      }
-
-      if (res.loadType === 'PLAYLIST_LOADED') {
-        for (const t of res.tracks) player.queue.add(t);
-        message.reply(`📚 Playlist **${res.playlist.name}** adicionada com **${res.tracks.length}** faixas.`);
+      if (!play.yt_validate(url)) {
+        // pesquisa por termo
+        const results = await play.search(query, { limit: 1 });
+        if (!results.length) return message.reply('❌ Não achei essa música.');
+        url = results[0].url;
+        info = results[0];
       } else {
-        const track = res.tracks[0];
-        player.queue.add(track);
-
-        const embed = new EmbedBuilder()
-          .setColor(0xffcc00)
-          .setTitle('🎶 Adicionado à Fila!')
-          .setDescription(`**${track.title}**\n⏱️ **${msToTime(track.duration)}**`)
-          .setFooter({ text: 'Marcinho Cachaçeiro 🍺' });
-
-        message.reply({ embeds: [embed] });
+        info = await play.video_basic_info(url);
       }
 
-      if (!player.playing && !player.paused) player.play();
-    } catch (err) {
-      console.error('Erro no !play:', err);
-      message.reply('😵‍💫 O Marcinho bugou tentando tocar isso aí.');
+      const title = info?.title ?? info?.video_details?.title ?? 'Música';
+      const thumbnail = info?.thumbnails?.[0]?.url || info?.video_details?.thumbnails?.[0]?.url;
+
+      // coloca na fila
+      q.songs.push({
+        url,
+        title,
+        thumbnail,
+        user: message.author.username
+      });
+
+      const embed = new EmbedBuilder()
+        .setColor(0xffcc00)
+        .setTitle('🎵 Adicionado à Fila!')
+        .setDescription(`**${title}**\nPedido por **${message.author.username}**`)
+        .setThumbnail(thumbnail || null);
+
+      await message.reply({ embeds: [embed] });
+
+      // se nada tocando, começa agora
+      if (q.player.state.status !== AudioPlayerStatus.Playing && !q.nowPlaying) {
+        playNext(message.guild.id, message.channel);
+      }
+    } catch (e) {
+      console.error('Erro em !play:', e);
+      message.reply('😵‍💫 Deu ruim pra achar/tocar isso aí.');
     }
   }
 
   // !skip
-  if (content === `${serverPrefix}skip`) {
-    const player = manager.players.get(serverId);
-    if (!player || !player.queue.current) return message.reply('❌ Tem porra nenhuma pra pular, mongo.');
-    player.stop();
-    message.reply('⏭️ Pulei. Próxima!');
+  if (message.content === '!skip') {
+    const q = queues.get(message.guild.id);
+    if (!q) return message.reply('❌ Não tem nada pra pular.');
+    message.reply('⏭️ Pulando!');
+    playNext(message.guild.id, message.channel);
   }
 
   // !stop
-  if (content === `${serverPrefix}stop`) {
-    const player = manager.players.get(serverId);
-    if (!player) return message.reply('❌ Nem tô tocando nada, krai.');
-    player.destroy();
-    message.reply('🛑 Parei tudo e saí do canal. Fui pegar outra gelada! 🍺');
+  if (message.content === '!stop') {
+    const q = queues.get(message.guild.id);
+    if (!q) return message.reply('❌ Nem tava tocando nada.');
+    q.songs.length = 0;
+    q.player.stop();
+    const conn = getVoiceConnection(message.guild.id);
+    if (conn) conn.destroy();
+    queues.delete(message.guild.id);
+    message.reply('🛑 Parei e vazei da call.');
   }
 
   // !lista
-  if (content === `${serverPrefix}lista`) {
-    const player = manager.players.get(serverId);
-    if (!player || (!player.queue.current && !player.queue.length)) {
-      return message.reply('📭 A fila do Marcinho tá mais vazia que geladeira de solteiro!');
+  if (message.content === '!lista') {
+    const q = queues.get(message.guild.id);
+    if (!q || (!q.nowPlaying && q.songs.length === 0)) {
+      return message.reply('📭 A fila tá vazia.');
     }
+    let out = '🎧 **Fila do Marcinho:**\n';
+    if (q.nowPlaying) out += `**Tocando:** ${q.nowPlaying.title}\n`;
+    if (q.songs.length) {
+      out += q.songs.map((s, i) => `**${i + 1}.** ${s.title} — pedido por *${s.user}*`).join('\n');
+    }
+    message.reply(out);
+  }
 
-    const current = player.queue.current
-      ? `**Tocando agora:** ${player.queue.current.title} (${msToTime(player.queue.current.duration)})\n`
-      : '';
-
-    const next = player.queue.length
-      ? player.queue.map((t, i) => `**${i + 1}.** ${t.title} (${msToTime(t.duration)})`).slice(0, 10).join('\n')
-      : '—';
-
-    const embed = new EmbedBuilder()
-      .setColor(0x00cc99)
-      .setTitle('🎧 Fila do Marcinho Cachaçeiro')
-      .setDescription(`${current}\n**Próximas:**\n${next}`)
-      .setFooter({ text: 'Vamo de música, bebê! 🍻' });
-
-    message.reply({ embeds: [embed] });
+  // !help
+  if (message.content === '!help') {
+    message.reply(
+      '🍺 **Comandos do Marcinho**\n' +
+      '• `!play <nome ou link>`\n' +
+      '• `!skip`\n' +
+      '• `!stop`\n' +
+      '• `!lista`\n'
+    );
   }
 });
-
-// utils
-function msToTime(ms) {
-  const s = Math.floor(ms / 1000);
-  const min = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${min}:${String(sec).padStart(2, '0')}`;
-}
 
 client.login(process.env.DISCORD_TOKEN);
