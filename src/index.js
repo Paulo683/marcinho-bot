@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { Shoukaku, Connectors } from 'shoukaku';
 
+// --- CONFIG DO CLIENT DISCORD ---
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -11,19 +12,25 @@ const client = new Client({
   ]
 });
 
-// --- CONFIGURAÇÃO DO LAVALINK ---
+// --- CONFIG DO LAVALINK ---
 const nodes = [
   {
     name: 'main',
     url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    auth: process.env.LAVALINK_PASSWORD, // 🔥 CORRIGIDO
+    authorization: process.env.LAVALINK_PASSWORD,
     secure: process.env.LAVALINK_SECURE === 'true'
   }
 ];
 
-client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes);
+// --- INICIALIZA O SHOUKAKU ---
+client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes, {
+  moveOnDisconnect: true,
+  resumable: false,
+  reconnectTries: Infinity,
+  reconnectInterval: 3000
+});
 
-// Logs
+// --- EVENTOS DO SHOUKAKU ---
 client.shoukaku.on('ready', (name) =>
   console.log(`✅ Node ${name} conectado com sucesso!`)
 );
@@ -34,7 +41,7 @@ client.shoukaku.on('close', (name, code, reason) =>
   console.warn(`⚠️ Node ${name} desconectado (${code}): ${reason}`)
 );
 
-// Quando o bot estiver pronto
+// --- QUANDO O BOT FICA ONLINE ---
 client.once('ready', () => {
   console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
@@ -47,11 +54,15 @@ async function tocarMusica(message, query) {
   const node = [...client.shoukaku.nodes.values()][0];
   if (!node) return message.reply('⚠️ Nenhum node Lavalink disponível.');
 
+  // Nova forma de resolver músicas no Shoukaku v4
   const result = await node.rest.resolve(query);
-  if (!result || !result.tracks.length)
-    return message.reply('❌ Não encontrei nada com esse nome.');
+  const tracks = result?.data || [];
 
-  const track = result.tracks[0];
+  if (!tracks.length) {
+    return message.reply('❌ Não encontrei nada com esse nome.');
+  }
+
+  const track = tracks[0];
   const player = await node.joinChannel({
     guildId: message.guild.id,
     channelId: voice.id,
@@ -114,4 +125,5 @@ client.on('messageCreate', async (message) => {
   }
 });
 
+// --- LOGIN ---
 client.login(process.env.DISCORD_TOKEN);
