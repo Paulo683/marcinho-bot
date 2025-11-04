@@ -46,12 +46,10 @@ client.on("messageCreate", async (message) => {
     let url, videoInfo;
 
     try {
-      // Se for link direto
       if (play.yt_validate(query) === "video") {
         url = query;
         videoInfo = await play.video_info(url);
       } else {
-        // Pesquisa no YouTube
         const search = await play.search(query, { limit: 1 });
         if (!search || !search.length)
           return message.reply("❌ Não achei essa música, corno triste.");
@@ -68,7 +66,6 @@ client.on("messageCreate", async (message) => {
 
       let serverQueue = queue.get(message.guild.id);
 
-      // Cria a fila e player se não existir
       if (!serverQueue) {
         const connection = joinVoiceChannel({
           channelId: voiceChannel.id,
@@ -111,7 +108,6 @@ client.on("messageCreate", async (message) => {
 
       message.reply({ embeds: [embed] });
 
-      // Se for a primeira música, toca já
       if (serverQueue.songs.length === 1 && !serverQueue.nowPlaying) {
         playNext(message.guild.id);
       }
@@ -165,13 +161,13 @@ client.on("messageCreate", async (message) => {
           "🛑 `!stop` — para tudo e vaza da call\n\n" +
           "Chama tua cremosa e vem pro boteco do Marcinho 🍻"
       )
-      .setFooter({ text: "Versão 1.7 — Stream play-dl corrigido 🎧" });
+      .setFooter({ text: "Versão 1.9 — Stream corrigido 🎧" });
 
     message.reply({ embeds: [embed] });
   }
 });
 
-// ---------- Função para tocar a próxima ----------
+// ---------- Função que toca a próxima ----------
 async function playNext(guildId) {
   const serverQueue = queue.get(guildId);
   if (!serverQueue) return;
@@ -185,8 +181,11 @@ async function playNext(guildId) {
   }
 
   try {
-    const ytInfo = await play.video_info(song.url);
-    const stream = await play.stream_from_info(ytInfo);
+    // ✅ Correção: stream direto com play-dl
+    const stream = await play.stream(song.url, {
+      quality: 2,
+      discordPlayerCompatibility: true,
+    });
 
     const resource = createAudioResource(stream.stream, {
       inputType: stream.type,
@@ -212,12 +211,28 @@ async function playNext(guildId) {
     );
 
     if (textChannel) textChannel.send({ embeds: [embed] });
+
+    // Logs
+    serverQueue.player.once(AudioPlayerStatus.Playing, () => {
+      console.log(`▶️ Tocando: ${song.title}`);
+    });
+
+    serverQueue.player.once(AudioPlayerStatus.Idle, () => {
+      console.log(`⏭️ Terminou: ${song.title}`);
+      playNext(guildId);
+    });
   } catch (err) {
     console.error("⚠️ Erro ao tocar:", err);
+
     const textChannel = serverQueue.voiceChannel.guild.channels.cache.find(
       (ch) => ch.isTextBased() && ch.permissionsFor(client.user).has("SendMessages")
     );
-    if (textChannel) textChannel.send("❌ Deu ruim no stream, véi. Vou tentar a próxima...");
+
+    if (textChannel)
+      textChannel.send(
+        `❌ **Erro ao tocar ${song.title}:**\n\`\`\`${err.message || err}\`\`\``
+      );
+
     playNext(guildId);
   }
 }
