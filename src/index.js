@@ -16,16 +16,14 @@ const nodes = [
   {
     name: 'main',
     url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    authorization: process.env.LAVALINK_PASSWORD,
+    auth: process.env.LAVALINK_PASSWORD, // 🔥 CORRIGIDO
     secure: process.env.LAVALINK_SECURE === 'true'
   }
 ];
 
-
-
 client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes);
 
-// Log do Shoukaku
+// Logs
 client.shoukaku.on('ready', (name) =>
   console.log(`✅ Node ${name} conectado com sucesso!`)
 );
@@ -46,14 +44,12 @@ async function tocarMusica(message, query) {
   const voice = message.member?.voice?.channel;
   if (!voice) return message.reply('🎧 Entra em um canal de voz primeiro!');
 
-  const node = [...client.shoukaku.nodes.values()][0]; // novo método
+  const node = [...client.shoukaku.nodes.values()][0];
   if (!node) return message.reply('⚠️ Nenhum node Lavalink disponível.');
 
   const result = await node.rest.resolve(query);
-
-  if (!result || !result.tracks.length) {
+  if (!result || !result.tracks.length)
     return message.reply('❌ Não encontrei nada com esse nome.');
-  }
 
   const track = result.tracks[0];
   const player = await node.joinChannel({
