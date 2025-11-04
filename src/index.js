@@ -17,10 +17,11 @@ const nodes = [
   {
     name: 'main',
     url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    authorization: process.env.LAVALINK_PASSWORD,
+    authorization: process.env.LAVALINK_PASSWORD, // <-- ESSENCIAL
     secure: process.env.LAVALINK_SECURE === 'true'
   }
 ];
+
 
 // --- INICIALIZA O SHOUKAKU ---
 client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes, {
