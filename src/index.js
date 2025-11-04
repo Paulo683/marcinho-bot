@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
-import { createLavalink } from './lavalink.js';
+import { Shoukaku, Connectors } from 'shoukaku';
 
 const client = new Client({
   intents: [
@@ -11,17 +11,42 @@ const client = new Client({
   ]
 });
 
+// --- CONFIGURAÇÃO DO LAVALINK ---
+const nodes = [
+  {
+    name: 'main',
+    url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
+    authorization: process.env.LAVALINK_PASSWORD,
+    secure: process.env.LAVALINK_SECURE === 'true'
+  }
+];
+
+client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes);
+
+// Log do Shoukaku
+client.shoukaku.on('ready', (name) =>
+  console.log(`✅ Node ${name} conectado com sucesso!`)
+);
+client.shoukaku.on('error', (name, error) =>
+  console.error(`❌ Erro no node ${name}:`, error)
+);
+client.shoukaku.on('close', (name, code, reason) =>
+  console.warn(`⚠️ Node ${name} desconectado (${code}): ${reason}`)
+);
+
+// Quando o bot estiver pronto
 client.once('ready', () => {
   console.log(`🍻 Marcinho online como ${client.user.tag}!`);
-  client.shoukaku = createLavalink(client);
 });
 
-// Função pra tocar música
+// --- FUNÇÃO PRA TOCAR MÚSICA ---
 async function tocarMusica(message, query) {
   const voice = message.member?.voice?.channel;
   if (!voice) return message.reply('🎧 Entra em um canal de voz primeiro!');
 
-  const node = client.shoukaku.getNode();
+  const node = [...client.shoukaku.nodes.values()][0]; // novo método
+  if (!node) return message.reply('⚠️ Nenhum node Lavalink disponível.');
+
   const result = await node.rest.resolve(query);
 
   if (!result || !result.tracks.length) {
@@ -53,7 +78,7 @@ async function tocarMusica(message, query) {
   message.reply({ embeds: [embed] });
 }
 
-// Comandos
+// --- COMANDOS ---
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -71,7 +96,7 @@ client.on('messageCreate', async (message) => {
   }
 
   if (cmd === '!stop') {
-    const node = client.shoukaku.getNode();
+    const node = [...client.shoukaku.nodes.values()][0];
     const player = node.players.get(message.guild.id);
     if (player) {
       player.stopTrack();
