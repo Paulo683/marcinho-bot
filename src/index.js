@@ -6,9 +6,7 @@ import {
   getVoiceConnection,
   AudioPlayerStatus,
 } from "@discordjs/voice";
-import ytdl from "ytdl-core";
-import yts from "youtube-sr";
-import fetch from "node-fetch";
+import play from "play-dl";
 import dotenv from "dotenv";
 
 dotenv.config();
@@ -35,55 +33,18 @@ client.on("messageCreate", async (message) => {
   // ---------- !play ----------
   if (message.content.startsWith("!play")) {
     const args = message.content.split(" ");
-    let query = args.slice(1).join(" ");
+    const query = args.slice(1).join(" ");
 
     if (!query)
-      return message.reply("⚠️ Só esqueceu o nome da música né, jamanta azul!");
+      return message.reply("⚠️ So esqueceu o nome ou link né jamanta azul!");
 
     const voiceChannel = message.member?.voice.channel;
     if (!voiceChannel)
-      return message.reply("🎧 Entra numa call primeiro, corno audível!");
+      return message.reply("🎧 Larga de ser imbecil, e entra em uma call antes!!");
 
-    let deezerTrack = null;
-    let url;
+    let serverQueue = queue.get(message.guild.id);
 
-    // 🔍 Busca primeiro no Deezer
-    try {
-      const deezerRes = await fetch(
-        `https://api.deezer.com/search?q=${encodeURIComponent(query)}`
-      );
-      const deezerData = await deezerRes.json();
-
-      if (deezerData && deezerData.data && deezerData.data.length > 0) {
-        deezerTrack = deezerData.data[0];
-        console.log("🎯 Música encontrada no Deezer:", deezerTrack.title);
-      } else {
-        console.warn("Nenhum resultado encontrado no Deezer");
-      }
-    } catch (err) {
-      console.error("Erro ao buscar no Deezer:", err);
-    }
-
-    // 🔎 Se achou algo no Deezer, usa nome + artista pra procurar no YouTube
-    if (deezerTrack) {
-      query = `${deezerTrack.title} ${deezerTrack.artist.name}`;
-    }
-
-    try {
-      const results = await yts.search(query, { limit: 1 });
-      if (!results || results.length === 0)
-        return message.reply("❌ Não achei essa música nem no YouTube, corno triste.");
-
-      const result = results[0];
-      url = `https://www.youtube.com/watch?v=${result.id}`;
-    } catch (err) {
-      console.error("Erro ao pesquisar no YouTube:", err);
-      return message.reply("😵‍💫 O Marcinho ficou tonto e não achou nada, véi!");
-    }
-
-    let currentQueue = queue.get(message.guild.id);
-
-    if (!currentQueue) {
+    if (!serverQueue) {
       const connection = joinVoiceChannel({
         channelId: voiceChannel.id,
         guildId: message.guild.id,
@@ -100,41 +61,52 @@ client.on("messageCreate", async (message) => {
       };
 
       queue.set(message.guild.id, newQueue);
-      currentQueue = newQueue;
+      serverQueue = newQueue;
 
       connection.subscribe(player);
       player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
     }
 
-    const title = deezerTrack ? deezerTrack.title : query;
-    const artist = deezerTrack ? deezerTrack.artist.name : "Desconhecido";
-    const thumbnail = deezerTrack ? deezerTrack.album.cover_big : null;
-    const deezerLink = deezerTrack ? deezerTrack.link : null;
+    try {
+      const searchResult = await play.search(query, { limit: 1 });
+      if (!searchResult.length)
+        return message.reply("❌ Não achei essa música, corno triste!");
 
-    currentQueue.songs.push({
-      url,
-      title,
-      artist,
-      thumbnail,
-      deezerLink,
-      user: message.author.username,
-    });
+      const song = searchResult[0];
+      const title = song.title;
+      const url = song.url;
+      const thumbnail = song.thumbnails[0].url || "";
+      const duration = song.durationInSec
+        ? `${Math.floor(song.durationInSec / 60)}:${String(
+            song.durationInSec % 60
+          ).padStart(2, "0")}`
+        : "??:??";
 
-    const embed = new EmbedBuilder()
-      .setColor(0xffcc00)
-      .setTitle("🎶 Adicionado à Fila!")
-      .setDescription(
-        `**${title}** — ${artist}\nPedido por **${message.author.username}**`
-      )
-      .setThumbnail(thumbnail || null)
-      .setFooter({ text: "Marcinho Cachaçeiro 🍺" });
+      serverQueue.songs.push({
+        url,
+        title,
+        thumbnail,
+        duration,
+        user: message.author.username,
+      });
 
-    if (deezerLink) embed.setURL(deezerLink);
+      const embed = new EmbedBuilder()
+        .setColor(0xffcc00)
+        .setTitle("🎶 Adicionado à Fila!")
+        .setDescription(
+          `**${title}**\n⏱️ Duração: **${duration}**\nPedido por **${message.author.username}**`
+        )
+        .setThumbnail(thumbnail)
+        .setFooter({ text: "Marcinho Cachaçeiro 🍺" });
 
-    message.reply({ embeds: [embed] });
+      message.reply({ embeds: [embed] });
 
-    if (currentQueue.songs.length === 1 && !currentQueue.nowPlaying) {
-      playNext(message.guild.id);
+      if (serverQueue.songs.length === 1 && !serverQueue.nowPlaying) {
+        playNext(message.guild.id);
+      }
+    } catch (error) {
+      console.error("Erro ao adicionar música:", error);
+      message.reply("❌ Ih rapaz... Marcinho não conseguiu achar essa não!");
     }
   }
 
@@ -164,7 +136,7 @@ client.on("messageCreate", async (message) => {
 
     let listaMsg = "🎧 **Fila do Marcinho Cachaçeiro:**\n\n";
     serverQueue.songs.forEach((song, index) => {
-      listaMsg += `**${index + 1}.** ${song.title} — ${song.artist || "Desconhecido"} (pedido por *${song.user}*)\n`;
+      listaMsg += `**${index + 1}.** ${song.title} (${song.duration}) — pedido por *${song.user}*\n`;
     });
 
     message.reply(listaMsg);
@@ -176,13 +148,13 @@ client.on("messageCreate", async (message) => {
       .setColor(0x00cc99)
       .setTitle("🍺 Marcinho Cachaçeiro — Manual do Corninho")
       .setDescription(
-        "🎵 `!play <nome>` — busca no Deezer e toca no YouTube\n" +
+        "🎵 `!play <link ou nome>` — toca uma música do YouTube\n" +
           "⏭️ `!skip` — pula pra próxima\n" +
           "📜 `!lista` — mostra as músicas na fila\n" +
           "🛑 `!stop` — para tudo e vaza da call\n\n" +
           "Chama tua cremosa e vem pro boteco do Marcinho 🍻"
       )
-      .setFooter({ text: "Versão 2.0 — Deezer + YouTube 🍹" });
+      .setFooter({ text: "Versão 1.7 — Agora busca decente 🍹" });
 
     message.reply({ embeds: [embed] });
   }
@@ -202,16 +174,10 @@ async function playNext(guildId) {
   }
 
   try {
-    const stream = ytdl(song.url, {
-      filter: "audioonly",
-      quality: "highestaudio",
-      highWaterMark: 1 << 25,
-      requestOptions: {
-        headers: { "User-Agent": "Mozilla/5.0" },
-      },
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type,
     });
-
-    const resource = createAudioResource(stream);
     serverQueue.player.play(resource);
     serverQueue.connection.subscribe(serverQueue.player);
     serverQueue.nowPlaying = song;
@@ -219,9 +185,11 @@ async function playNext(guildId) {
     const embed = new EmbedBuilder()
       .setColor(0xff6600)
       .setTitle("🎶 Tocando Agora!")
-      .setDescription(`**${song.title}** — ${song.artist || "Desconhecido"}`)
-      .setThumbnail(song.thumbnail || null)
-      .setURL(song.deezerLink || song.url)
+      .setDescription(
+        `**${song.title}**\n⏱️ Duração: **${song.duration}**\nPedido por **${song.user}**`
+      )
+      .setThumbnail(song.thumbnail)
+      .setURL(song.url)
       .setFooter({ text: "Marcinho no comando 🎧" });
 
     const textChannel = serverQueue.voiceChannel.guild.channels.cache.find(
@@ -230,10 +198,9 @@ async function playNext(guildId) {
 
     if (textChannel) textChannel.send({ embeds: [embed] });
   } catch (err) {
-    console.error("Deu pra tocar não pai, deu erro:", err);
+    console.error("Erro ao tocar:", err);
     playNext(guildId);
   }
 }
 
-// ✅ login com variável de ambiente certa
 client.login(process.env.DISCORD_TOKEN);

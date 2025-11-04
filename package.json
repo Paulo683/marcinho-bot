@@ -21,6 +21,7 @@
     "discord.js": "^14.24.2",
     "dotenv": "^16.6.1",
     "node-fetch": "^3.3.2",
+    "play-dl": "^1.9.7",
     "youtube-sr": "^4.3.12",
     "ytdl-core": "^4.11.5"
   }
