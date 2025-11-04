@@ -1,0 +1,4 @@
+git rm --cached .env
+git add .gitignore
+git commit -m "fix: remove .env from git tracking"
+git push origin main
