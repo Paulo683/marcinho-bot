@@ -1,6 +1,12 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } from '@discordjs/voice';
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  NoSubscriberBehavior
+} from '@discordjs/voice';
 import fetch from 'node-fetch';
 import express from 'express';
 
@@ -39,11 +45,12 @@ client.once('ready', () => {
 
 // === FUNÇÃO PARA BUSCAR MÚSICA NO LAVALINK ===
 async function searchTrack(query) {
-  const url = `http://${LAVALINK_HOST}:${LAVALINK_PORT}/loadtracks?identifier=ytsearch:${encodeURIComponent(query)}`;
+  const url = `http://${LAVALINK_HOST}:${LAVALINK_PORT}/loadtracks?identifier=ytsearch:${encodeURIComponent(
+    query
+  )}`;
+
   const res = await fetch(url, {
-    headers: {
-      Authorization: LAVALINK_PASSWORD
-    }
+    headers: { Authorization: LAVALINK_PASSWORD }
   });
 
   if (!res.ok) throw new Error(`Erro ao conectar com Lavalink: ${res.status}`);
@@ -53,7 +60,7 @@ async function searchTrack(query) {
   return data.tracks[0];
 }
 
-// === FUNÇÃO TOCAR MÚSICA ===
+// === FUNÇÃO TOCAR MÚSICA (USANDO ROTA /STREAM) ===
 async function tocarMusica(message, query) {
   const voiceChannel = message.member?.voice?.channel;
   if (!voiceChannel)
@@ -69,15 +76,23 @@ async function tocarMusica(message, query) {
       adapterCreator: voiceChannel.guild.voiceAdapterCreator
     });
 
-    const audioUrl = `http://${LAVALINK_HOST}:${LAVALINK_PORT}/decodetrack?track=${track.encoded}`;
-    const resource = createAudioResource(audioUrl);
+    // ✅ CORREÇÃO — rota correta para stream de áudio
+    const resource = createAudioResource(
+      `http://${LAVALINK_HOST}:${LAVALINK_PORT}/stream/${encodeURIComponent(
+        track.encoded
+      )}`,
+      { inlineVolume: true }
+    );
+
     player.play(resource);
     conn.subscribe(player);
 
     const embed = new EmbedBuilder()
       .setColor(0xffcc00)
       .setTitle('🎶 Tocando Agora!')
-      .setDescription(`**${track.info.title}**\nPedido por **${message.author.username}**`)
+      .setDescription(
+        `**${track.info.title}**\nPedido por **${message.author.username}**`
+      )
       .setURL(track.info.uri)
       .setThumbnail(track.info.artworkUrl || null);
 
@@ -101,7 +116,8 @@ client.on('messageCreate', async (message) => {
   const query = args.join(' ');
 
   if (cmd === 'play') {
-    if (!query) return message.reply('⚠️ Fala o nome da música ou o link, jamanta azul!');
+    if (!query)
+      return message.reply('⚠️ Fala o nome da música ou o link, jamanta azul!');
     await tocarMusica(message, query);
   }
 
@@ -113,8 +129,8 @@ client.on('messageCreate', async (message) => {
   if (cmd === 'help') {
     message.reply(
       '🍺 **Comandos do Marcinho**\n' +
-      '• `!play <nome ou link>` — toca a música\n' +
-      '• `!stop` — para a música e sai\n'
+        '• `!play <nome ou link>` — toca a música\n' +
+        '• `!stop` — para a música e sai\n'
     );
   }
 });
