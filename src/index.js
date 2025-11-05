@@ -1,158 +1,97 @@
-import "libsodium-wrappers";
-import "opusscript";
-import "./keepalive.js";
-import play from "play-dl";
+import 'dotenv/config';
+import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
+import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } from '@discordjs/voice';
+import ytdl from 'ytdl-core';
+import express from 'express';
 
-// Garante que o YouTube funcione no Railway
-await play.setToken({
-  youtube: { cookie: process.env.YT_COOKIE || "" }
-});
-import { Client, GatewayIntentBits } from "discord.js";
-import {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
-  NoSubscriberBehavior,
-} from "@discordjs/voice";
-import play from "play-dl";
-import dotenv from "dotenv";
+// === SERVIDOR EXPRESS PRA MANTER O RAILWAY ACORDADO ===
+const app = express();
+app.get('/', (_, res) => res.send('🍻 Marcinho está online e bebendo!'));
+app.listen(process.env.PORT || 3000, () => console.log('🌐 Keep-alive ativo no Railway!'));
 
-
-dotenv.config();
-
-// Configura o cliente do Discord
+// === CONFIG DO CLIENTE DISCORD ===
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-  ],
+    GatewayIntentBits.GuildVoiceStates
+  ]
 });
 
-const queue = new Map();
-
-// Autenticação automática no YouTube (sem prompt)
-(async () => {
-  try {
-    await play.authorization();
-    console.log("✅ Autorização YouTube feita com sucesso (modo automático)");
-  } catch (err) {
-    console.log("⚠️ Ignorando erro de autorização:", err.message);
-  }
-})();
-
-// Evento quando o bot estiver online
-client.once("ready", () => {
-  console.log(`🎵 Marcinho online como ${client.user.tag}!`);
+// === EVENTO READY ===
+client.once('ready', () => {
+  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
 
-// Evento de mensagem
-client.on("messageCreate", async (message) => {
-  if (!message.content.startsWith("!play") || message.author.bot) return;
-
-  const query = message.content.replace("!play", "").trim();
-  if (!query) return message.reply("🎶 Escreve o nome ou link da música, pô!");
-
+// === FUNÇÃO PRA TOCAR MÚSICA ===
+async function tocarMusica(message, query) {
   const voiceChannel = message.member?.voice?.channel;
-  if (!voiceChannel)
-    return message.reply("🚫 Entra num canal de voz primeiro, doido!");
-
-  const serverQueue = queue.get(message.guild.id);
+  if (!voiceChannel) return message.reply('🎧 Entra em um canal de voz primeiro, jamanta azul!');
 
   try {
-    // Busca a música
-    const yt = await play.search(query, { limit: 1 });
-    if (!yt.length)
-      return message.reply("❌ Deu ruim pra achar essa música aí, tenta outra!");
-
-    const song = {
-      title: yt[0].title,
-      url: yt[0].url,
-      requestedBy: message.author.username,
-    };
-
-    if (!serverQueue) {
-      const queueObject = {
-        voiceChannel,
-        connection: null,
-        player: null,
-        songs: [],
-        playing: false,
-      };
-
-      queue.set(message.guild.id, queueObject);
-      queueObject.songs.push(song);
-
-      try {
-        const connection = joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: message.guild.id,
-          adapterCreator: message.guild.voiceAdapterCreator,
-        });
-        queueObject.connection = connection;
-        playSong(message, queueObject);
-      } catch (err) {
-        console.error("Erro ao entrar no canal de voz:", err);
-        queue.delete(message.guild.id);
-        return message.reply("⚠️ Deu ruim pra entrar no canal de voz!");
-      }
-    } else {
-      serverQueue.songs.push(song);
-      message.reply(`🎵 Adicionado à fila: **${song.title}**`);
-    }
-  } catch (err) {
-    console.error("Erro ao processar comando:", err);
-    message.reply("❌ Deu ruim pra tocar essa música aí, tenta outra!");
-  }
-});
-
-async function playSong(message, queueObject) {
-  if (!queueObject.songs.length) {
-    queueObject.connection.destroy();
-    queue.delete(message.guild.id);
-    return message.channel.send("🍺 Fila acabou. Fui pegar outra gelada!");
-  }
-
-  const song = queueObject.songs[0];
-  try {
-    const stream = await play.stream(song.url);
-    const resource = createAudioResource(stream.stream, {
-      inputType: stream.type,
+    const stream = ytdl(query, {
+      filter: 'audioonly',
+      highWaterMark: 1 << 25,
+      quality: 'highestaudio'
     });
 
-    const player = createAudioPlayer({
-      behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: message.guild.id,
+      adapterCreator: message.guild.voiceAdapterCreator,
+      selfDeaf: false
     });
 
-    queueObject.player = player;
-    queueObject.playing = true;
+    const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+    const resource = createAudioResource(stream);
+    connection.subscribe(player);
     player.play(resource);
-    queueObject.connection.subscribe(player);
-
-    message.channel.send(
-      `🎶 Tocando agora: **${song.title}** (pedido por ${song.requestedBy})`
-    );
 
     player.on(AudioPlayerStatus.Idle, () => {
-      queueObject.songs.shift();
-      playSong(message, queueObject);
+      message.channel.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
+      connection.destroy();
     });
 
-    player.on("error", (error) => {
-      console.error("Erro ao tocar:", error);
-      message.channel.send("⚠️ Deu ruim durante a reprodução!");
-      queueObject.songs.shift();
-      playSong(message, queueObject);
-    });
+    const embed = new EmbedBuilder()
+      .setColor(0xffcc00)
+      .setTitle('🎵 Tocando Agora!')
+      .setDescription(`🎶 **${query}**\nPedido por **${message.author.username}**`)
+      .setThumbnail('https://i.imgur.com/4M34hi2.png');
+
+    message.reply({ embeds: [embed] });
+
   } catch (err) {
-    console.error("Erro tocando stream:", err);
-    message.channel.send("⚠️ Não consegui tocar essa música, tenta outra!");
-    queueObject.songs.shift();
-    playSong(message, queueObject);
+    console.error(err);
+    message.reply('😵‍💫 Deu ruim pra tocar isso aí, tenta outro link.');
   }
 }
 
-// Login
+// === COMANDOS ===
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
+  const [cmd, ...args] = message.content.trim().split(' ');
+  const query = args.join(' ');
+
+  if (cmd === '!play') {
+    if (!query) return message.reply('⚠️ Fala o nome ou link, jamanta azul.');
+    await tocarMusica(message, query);
+  }
+
+  if (cmd === '!stop') {
+    const voiceChannel = message.member?.voice?.channel;
+    if (!voiceChannel) return message.reply('❌ Nem tava tocando nada.');
+    voiceChannel.leave?.();
+    message.reply('🛑 Parei e vazei da call.');
+  }
+
+  if (cmd === '!help') {
+    message.reply(
+      '🍺 **Comandos do Marcinho**\n' +
+      '• `!play <link do YouTube>`\n' +
+      '• `!stop`\n'
+    );
+  }
+});
+
 client.login(process.env.DISCORD_TOKEN);
