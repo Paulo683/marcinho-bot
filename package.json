@@ -1,8 +1,9 @@
 {
   "name": "marcinho-bot",
-  "version": "2.1.3",
-  "description": "Bot do Marcinho 🍺 - Player de música pro Discord",
+  "version": "2.2.0",
+  "description": "Bot do Marcinho 🍺",
   "main": "src/index.js",
+  "type": "module",
   "scripts": {
     "start": "node src/index.js"
   },

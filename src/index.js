@@ -1,25 +1,35 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } from '@discordjs/voice';
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
+} from '@discordjs/voice';
 import ytdl from '@distube/ytdl-core';
 import express from 'express';
 
-// === SERVIDOR EXPRESS PRA MANTER O RAILWAY ACORDADO ===
+// === KEEP-ALIVE PRO RAILWAY ===
 const app = express();
-app.get('/', (_, res) => res.send('🍻 Marcinho está online e bebendo!'));
-app.listen(process.env.PORT || 3000, () => console.log('🌐 Keep-alive ativo no Railway!'));
+app.get('/', (_, res) => res.send('🍺 Marcinho tá online no Railway!'));
+app.listen(process.env.PORT || 3000, () =>
+  console.log('🌐 Keep-alive ativo no Railway!')
+);
 
-// === CONFIG DO CLIENTE DISCORD ===
+// === CLIENT DISCORD ===
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates
-  ]
+    GatewayIntentBits.GuildVoiceStates,
+  ],
 });
 
-// === EVENTO READY ===
+let queue = new Map();
+
+// === LOGIN EVENT ===
 client.once('ready', () => {
   console.log(`🍻 Marcinho online como ${client.user.tag}!`);
 });
@@ -27,26 +37,29 @@ client.once('ready', () => {
 // === FUNÇÃO PRA TOCAR MÚSICA ===
 async function tocarMusica(message, query) {
   const voiceChannel = message.member?.voice?.channel;
-  if (!voiceChannel) return message.reply('🎧 Entra em um canal de voz primeiro, jamanta azul!');
+  if (!voiceChannel) return message.reply('🎧 Entra num canal de voz, jamanta!');
 
   try {
-    const stream = ytdl(query, {
+    const info = await ytdl.getInfo(query);
+    const stream = ytdl.downloadFromInfo(info, {
       filter: 'audioonly',
+      quality: 'highestaudio',
       highWaterMark: 1 << 25,
-      quality: 'highestaudio'
     });
 
     const connection = joinVoiceChannel({
       channelId: voiceChannel.id,
       guildId: message.guild.id,
       adapterCreator: message.guild.voiceAdapterCreator,
-      selfDeaf: false
     });
 
-    const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+    const player = createAudioPlayer({
+      behaviors: { noSubscriber: NoSubscriberBehavior.Stop },
+    });
+
     const resource = createAudioResource(stream);
-    connection.subscribe(player);
     player.play(resource);
+    connection.subscribe(player);
 
     player.on(AudioPlayerStatus.Idle, () => {
       message.channel.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
@@ -56,21 +69,22 @@ async function tocarMusica(message, query) {
     const embed = new EmbedBuilder()
       .setColor(0xffcc00)
       .setTitle('🎵 Tocando Agora!')
-      .setDescription(`🎶 **${query}**\nPedido por **${message.author.username}**`)
-      .setThumbnail('https://i.imgur.com/4M34hi2.png');
+      .setDescription(`**${info.videoDetails.title}**\nPedido por **${message.author.username}**`)
+      .setURL(info.videoDetails.video_url)
+      .setThumbnail(info.videoDetails.thumbnails[0]?.url || null);
 
-    message.reply({ embeds: [embed] });
-
+    await message.reply({ embeds: [embed] });
   } catch (err) {
     console.error(err);
-    message.reply('😵‍💫 Deu ruim pra tocar isso aí, tenta outro link.');
+    message.reply('⚠️ Deu ruim pra tocar essa, tenta outra!');
   }
 }
 
 // === COMANDOS ===
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
-  const [cmd, ...args] = message.content.trim().split(' ');
+
+  const [cmd, ...args] = message.content.split(' ');
   const query = args.join(' ');
 
   if (cmd === '!play') {
@@ -80,18 +94,20 @@ client.on('messageCreate', async (message) => {
 
   if (cmd === '!stop') {
     const voiceChannel = message.member?.voice?.channel;
-    if (!voiceChannel) return message.reply('❌ Nem tava tocando nada.');
+    if (!voiceChannel)
+      return message.reply('❌ Nem tô tocando nada, jamanta.');
     voiceChannel.leave?.();
-    message.reply('🛑 Parei e vazei da call.');
+    message.reply('🛑 Parei e fui pegar outra gelada 🍺');
   }
 
   if (cmd === '!help') {
     message.reply(
       '🍺 **Comandos do Marcinho**\n' +
-      '• `!play <link do YouTube>`\n' +
-      '• `!stop`\n'
+        '• `!play <nome ou link>` — toca música\n' +
+        '• `!stop` — para e sai da call\n'
     );
   }
 });
 
+// === LOGIN ===
 client.login(process.env.DISCORD_TOKEN);
