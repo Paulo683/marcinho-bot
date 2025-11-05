@@ -1,107 +1,123 @@
 import 'dotenv/config';
+import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
+import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } from '@discordjs/voice';
+import fetch from 'node-fetch';
 import express from 'express';
-import { Client, GatewayIntentBits, Partials, Collection } from 'discord.js';
-import { Manager } from 'erela.js';
-import Spotify from 'erela.js-spotify';
 
-// ====== Keep-alive (Railway) ======
+// === KEEP-ALIVE RAILWAY ===
 const app = express();
-app.get('/', (_, res) => res.send('🍻 Marcinho tá ON (keep-alive)!'));
-app.listen(process.env.PORT || 3000, () =>
-  console.log('🌐 Keep-alive ativo no Railway!')
-);
+app.get('/', (_, res) => res.send('🍻 Marcinho tá vivo no Railway!'));
+app.listen(process.env.PORT || 3000, () => console.log('🌐 Servidor ativo no Railway!'));
 
-// ====== Cliente Discord ======
+// === CONFIG CLIENT ===
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ],
-  partials: [Partials.Channel]
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildVoiceStates
+  ]
 });
 
-// ====== Coleção de comandos estilo Jockie ======
-client.commands = new Collection();
-client.prefix = process.env.PREFIX || '!';
+// === VARIÁVEIS DO LAVALINK ===
+const LAVALINK_HOST = process.env.LAVALINK_HOST || 'lavalink';
+const LAVALINK_PORT = process.env.LAVALINK_PORT || '2333';
+const LAVALINK_PASSWORD = process.env.LAVALINK_PASSWORD || 'youshallnotpass';
+const PREFIX = process.env.PREFIX || '!';
 
-// ====== Registrar comandos (carregamento simples em memória) ======
-import { ping } from './modules/commands/ping.js';
-import { play } from './modules/commands/play.js';
-import { skip } from './modules/commands/skip.js';
-import { stop } from './modules/commands/stop.js';
-import { queue } from './modules/commands/queue.js';
-client.commands.set('ping', ping);
-client.commands.set('play', play);
-client.commands.set('p', play); // alias
-client.commands.set('skip', skip);
-client.commands.set('s', skip); // alias
-client.commands.set('stop', stop);
-client.commands.set('leave', stop); // alias
-client.commands.set('queue', queue);
-client.commands.set('q', queue); // alias
-
-// ====== Erela.js (Lavalink) ======
-const nodes = [
-  {
-    host: process.env.LAVALINK_HOST,
-    port: Number(process.env.LAVALINK_PORT || 2333),
-    password: process.env.LAVALINK_PASSWORD,
-    secure: String(process.env.LAVALINK_SECURE || 'false') === 'true'
+// === PLAYER GLOBAL ===
+const player = createAudioPlayer({
+  behaviors: {
+    noSubscriber: NoSubscriberBehavior.Play
   }
-];
+});
 
-client.manager = new Manager({
-  nodes,
-  send(id, payload) {
-    const guild = client.guilds.cache.get(id);
-    if (guild) guild.shard.send(payload);
-  },
-  plugins: [
-    new Spotify({
-      clientID: process.env.SPOTIFY_CLIENT_ID || undefined,
-      clientSecret: process.env.SPOTIFY_CLIENT_SECRET || undefined
-    })
-  ]
-})
-  .on('nodeConnect', node => console.log(`🔌 Lavalink conectado: ${node.options.host}`))
-  .on('nodeError', (node, err) =>
-    console.error(`💥 Erro no node ${node.options.host}:`, err?.message || err)
-  )
-  .on('trackStart', (player, track) => {
-    const ch = client.channels.cache.get(player.textChannel);
-    ch?.send(`🎵 **Tocando:** ${track.title} — pedido por **${track.requester}**`);
-  })
-  .on('queueEnd', player => {
-    const ch = client.channels.cache.get(player.textChannel);
-    ch?.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
-    player.destroy();
+// === EVENTO READY ===
+client.once('ready', () => {
+  console.log(`🍺 Marcinho online como ${client.user.tag}!`);
+});
+
+// === FUNÇÃO PARA BUSCAR MÚSICA NO LAVALINK ===
+async function searchTrack(query) {
+  const url = `http://${LAVALINK_HOST}:${LAVALINK_PORT}/loadtracks?identifier=ytsearch:${encodeURIComponent(query)}`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: LAVALINK_PASSWORD
+    }
   });
 
-// ====== Eventos do Discord ======
-client.on('ready', () => {
-  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
-  client.manager.init(client.user.id);
+  if (!res.ok) throw new Error(`Erro ao conectar com Lavalink: ${res.status}`);
+  const data = await res.json();
+
+  if (!data.tracks || !data.tracks.length) return null;
+  return data.tracks[0];
+}
+
+// === FUNÇÃO TOCAR MÚSICA ===
+async function tocarMusica(message, query) {
+  const voiceChannel = message.member?.voice?.channel;
+  if (!voiceChannel)
+    return message.reply('🎧 Entra num canal de voz primeiro, jamanta azul!');
+
+  try {
+    const track = await searchTrack(query);
+    if (!track) return message.reply('😔 Não achei nada com esse nome.');
+
+    const conn = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator
+    });
+
+    const audioUrl = `http://${LAVALINK_HOST}:${LAVALINK_PORT}/decodetrack?track=${track.encoded}`;
+    const resource = createAudioResource(audioUrl);
+    player.play(resource);
+    conn.subscribe(player);
+
+    const embed = new EmbedBuilder()
+      .setColor(0xffcc00)
+      .setTitle('🎶 Tocando Agora!')
+      .setDescription(`**${track.info.title}**\nPedido por **${message.author.username}**`)
+      .setURL(track.info.uri)
+      .setThumbnail(track.info.artworkUrl || null);
+
+    message.reply({ embeds: [embed] });
+  } catch (err) {
+    console.error(err);
+    message.reply('😵‍💫 Deu ruim pra tocar essa, tenta outra!');
+  }
+}
+
+// === EVENTO PLAYER ===
+player.on(AudioPlayerStatus.Idle, () => {
+  console.log('🎵 Música terminou.');
 });
 
-client.on('raw', d => client.manager.updateVoiceState(d));
-
+// === COMANDOS ===
 client.on('messageCreate', async (message) => {
-  try {
-    if (!message.guild || message.author.bot) return;
+  if (message.author.bot || !message.content.startsWith(PREFIX)) return;
 
-    const prefix = client.prefix;
-    if (!message.content.startsWith(prefix)) return;
+  const [cmd, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/);
+  const query = args.join(' ');
 
-    const [cmdName, ...args] = message.content.slice(prefix.length).trim().split(/\s+/);
-    const cmd = client.commands.get(cmdName.toLowerCase());
-    if (!cmd) return;
+  if (cmd === 'play') {
+    if (!query) return message.reply('⚠️ Fala o nome da música ou o link, jamanta azul!');
+    await tocarMusica(message, query);
+  }
 
-    await cmd.run({ client, message, args });
-  } catch (e) {
-    console.error('Erro no messageCreate:', e);
+  if (cmd === 'stop') {
+    player.stop(true);
+    message.reply('🛑 Parei de tocar e fui pegar outra gelada 🍺');
+  }
+
+  if (cmd === 'help') {
+    message.reply(
+      '🍺 **Comandos do Marcinho**\n' +
+      '• `!play <nome ou link>` — toca a música\n' +
+      '• `!stop` — para a música e sai\n'
+    );
   }
 });
 
+// === LOGIN ===
 client.login(process.env.DISCORD_TOKEN);
