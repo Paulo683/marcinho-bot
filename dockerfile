@@ -1,7 +1,17 @@
+# Imagem base
 FROM node:20-alpine
+
+# Cria diretório
 WORKDIR /app
+
+# Copia arquivos
 COPY package*.json ./
-RUN npm ci
+RUN npm install
+
 COPY . .
+
+# Porta para o Railway
 EXPOSE 3000
-CMD ["node", "src/index.js"]
+
+# Comando para iniciar
+CMD ["npm", "start"]
