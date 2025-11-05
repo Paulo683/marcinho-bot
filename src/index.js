@@ -1,5 +1,12 @@
 import "libsodium-wrappers";
 import "opusscript";
+import "./keepalive.js";
+import play from "play-dl";
+
+// Garante que o YouTube funcione no Railway
+await play.setToken({
+  youtube: { cookie: process.env.YT_COOKIE || "" }
+});
 import { Client, GatewayIntentBits } from "discord.js";
 import {
   joinVoiceChannel,
@@ -10,6 +17,7 @@ import {
 } from "@discordjs/voice";
 import play from "play-dl";
 import dotenv from "dotenv";
+
 
 dotenv.config();
 
