@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } from '@discordjs/voice';
-import ytdl from 'ytdl-core';
+import ytdl from '@distube/ytdl-core';
 import express from 'express';
 
 // === SERVIDOR EXPRESS PRA MANTER O RAILWAY ACORDADO ===
