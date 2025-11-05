@@ -1,10 +1,19 @@
+import "libsodium-wrappers";
+import "opusscript";
 import { Client, GatewayIntentBits } from "discord.js";
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, NoSubscriberBehavior } from "@discordjs/voice";
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  NoSubscriberBehavior,
+} from "@discordjs/voice";
 import play from "play-dl";
 import dotenv from "dotenv";
 
 dotenv.config();
 
+// Configura o cliente do Discord
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -16,7 +25,7 @@ const client = new Client({
 
 const queue = new Map();
 
-// 🔹 Autorização automática do YouTube (sem prompt)
+// Autenticação automática no YouTube (sem prompt)
 (async () => {
   try {
     await play.authorization();
@@ -26,97 +35,116 @@ const queue = new Map();
   }
 })();
 
+// Evento quando o bot estiver online
 client.once("ready", () => {
-  console.log(`🍺 Marcinho online como ${client.user.tag}!`);
+  console.log(`🎵 Marcinho online como ${client.user.tag}!`);
 });
 
+// Evento de mensagem
 client.on("messageCreate", async (message) => {
   if (!message.content.startsWith("!play") || message.author.bot) return;
 
-  const args = message.content.split(" ").slice(1);
-  const query = args.join(" ");
-  if (!query) return message.reply("❌ Me diga o nome ou link da música!");
+  const query = message.content.replace("!play", "").trim();
+  if (!query) return message.reply("🎶 Escreve o nome ou link da música, pô!");
 
   const voiceChannel = message.member?.voice?.channel;
-  if (!voiceChannel) return message.reply("🎧 Entra num canal de voz primeiro, irmão!");
+  if (!voiceChannel)
+    return message.reply("🚫 Entra num canal de voz primeiro, doido!");
 
-  const guildQueue = queue.get(message.guild.id);
-  if (!guildQueue) {
-    const queueObject = {
-      voiceChannel,
-      textChannel: message.channel,
-      connection: null,
-      player: createAudioPlayer({
-        behaviors: { noSubscriber: NoSubscriberBehavior.Pause },
-      }),
-      songs: [],
-      playing: false,
-      notified: false,
+  const serverQueue = queue.get(message.guild.id);
+
+  try {
+    // Busca a música
+    const yt = await play.search(query, { limit: 1 });
+    if (!yt.length)
+      return message.reply("❌ Deu ruim pra achar essa música aí, tenta outra!");
+
+    const song = {
+      title: yt[0].title,
+      url: yt[0].url,
+      requestedBy: message.author.username,
     };
-    queue.set(message.guild.id, queueObject);
-    await execute(message, queueObject, query);
-  } else {
-    guildQueue.songs.push(query);
-    const videoInfo = await play.search(query, { limit: 1 });
-    if (videoInfo.length) {
-      const song = videoInfo[0];
-      const embed = {
-        title: "🎵 Adicionado à Fila!",
-        description: `**${song.title}**\nPedido por ${message.author.username}`,
-        color: 0x00ff00,
-        thumbnail: { url: song.thumbnails[0].url },
+
+    if (!serverQueue) {
+      const queueObject = {
+        voiceChannel,
+        connection: null,
+        player: null,
+        songs: [],
+        playing: false,
       };
-      message.reply({ embeds: [embed] });
+
+      queue.set(message.guild.id, queueObject);
+      queueObject.songs.push(song);
+
+      try {
+        const connection = joinVoiceChannel({
+          channelId: voiceChannel.id,
+          guildId: message.guild.id,
+          adapterCreator: message.guild.voiceAdapterCreator,
+        });
+        queueObject.connection = connection;
+        playSong(message, queueObject);
+      } catch (err) {
+        console.error("Erro ao entrar no canal de voz:", err);
+        queue.delete(message.guild.id);
+        return message.reply("⚠️ Deu ruim pra entrar no canal de voz!");
+      }
+    } else {
+      serverQueue.songs.push(song);
+      message.reply(`🎵 Adicionado à fila: **${song.title}**`);
     }
+  } catch (err) {
+    console.error("Erro ao processar comando:", err);
+    message.reply("❌ Deu ruim pra tocar essa música aí, tenta outra!");
   }
 });
 
-async function execute(message, queueObject, query) {
-  try {
-    const video = await play.search(query, { limit: 1 });
-    if (!video.length) return message.reply("❌ Não encontrei nada com esse nome.");
-
-    const song = video[0];
-    const embed = {
-      title: "🎵 Tocando Agora!",
-      description: `**${song.title}**\nPedido por ${message.author.username}`,
-      color: 0x00ffff,
-      thumbnail: { url: song.thumbnails[0].url },
-    };
-    message.reply({ embeds: [embed] });
-
-    const connection = joinVoiceChannel({
-      channelId: queueObject.voiceChannel.id,
-      guildId: queueObject.voiceChannel.guild.id,
-      adapterCreator: queueObject.voiceChannel.guild.voiceAdapterCreator,
-    });
-
-    queueObject.connection = connection;
-
-    // 🔹 Garante compatibilidade de stream no Railway
-    const yt = await play.stream(song.url, { discordPlayerCompatibility: true });
-    const resource = createAudioResource(yt.stream, { inputType: yt.type });
-
-    queueObject.player.play(resource);
-    queueObject.connection.subscribe(queueObject.player);
-    queueObject.playing = true;
-
-    queueObject.player.on(AudioPlayerStatus.Idle, () => {
-      queueObject.songs.shift();
-      if (queueObject.songs.length > 0) {
-        execute(message, queueObject, queueObject.songs[0]);
-      } else if (!queueObject.notified) {
-        queueObject.notified = true;
-        message.channel.send("🍺 Fila acabou. Fui pegar outra gelada!");
-        queueObject.connection.destroy();
-        queue.delete(message.guild.id);
-      }
-    });
-  } catch (error) {
-    console.error("Erro tocando stream:", error);
-    message.reply("⚠️ Deu ruim pra tocar essa música aí, tenta outra!");
+async function playSong(message, queueObject) {
+  if (!queueObject.songs.length) {
+    queueObject.connection.destroy();
     queue.delete(message.guild.id);
+    return message.channel.send("🍺 Fila acabou. Fui pegar outra gelada!");
+  }
+
+  const song = queueObject.songs[0];
+  try {
+    const stream = await play.stream(song.url);
+    const resource = createAudioResource(stream.stream, {
+      inputType: stream.type,
+    });
+
+    const player = createAudioPlayer({
+      behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+    });
+
+    queueObject.player = player;
+    queueObject.playing = true;
+    player.play(resource);
+    queueObject.connection.subscribe(player);
+
+    message.channel.send(
+      `🎶 Tocando agora: **${song.title}** (pedido por ${song.requestedBy})`
+    );
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      queueObject.songs.shift();
+      playSong(message, queueObject);
+    });
+
+    player.on("error", (error) => {
+      console.error("Erro ao tocar:", error);
+      message.channel.send("⚠️ Deu ruim durante a reprodução!");
+      queueObject.songs.shift();
+      playSong(message, queueObject);
+    });
+  } catch (err) {
+    console.error("Erro tocando stream:", err);
+    message.channel.send("⚠️ Não consegui tocar essa música, tenta outra!");
+    queueObject.songs.shift();
+    playSong(message, queueObject);
   }
 }
 
+// Login
 client.login(process.env.DISCORD_TOKEN);

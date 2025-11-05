@@ -7,13 +7,22 @@
   "scripts": {
     "start": "node src/index.js"
   },
-  "keywords": ["discord", "music", "bot", "play-dl", "marcinho"],
+  "keywords": [
+    "discord",
+    "music",
+    "bot",
+    "play-dl",
+    "marcinho"
+  ],
   "author": "Paulo",
   "license": "MIT",
   "dependencies": {
+    "@discordjs/opus": "^0.9.0",
     "@discordjs/voice": "^0.17.0",
     "discord.js": "^14.15.3",
-    "play-dl": "^1.9.7",
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "libsodium-wrappers": "^0.7.15",
+    "opusscript": "^0.0.8",
+    "play-dl": "^1.9.7"
   }
 }
