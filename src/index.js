@@ -17,11 +17,10 @@ const nodes = [
   {
     name: 'main',
     url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    authorization: process.env.LAVALINK_PASSWORD, // <-- ESSENCIAL
+    authorization: process.env.LAVALINK_PASSWORD, // ESSENCIAL ⚠️
     secure: process.env.LAVALINK_SECURE === 'true'
   }
 ];
-
 
 // --- INICIALIZA O SHOUKAKU ---
 client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), nodes, {
@@ -55,7 +54,7 @@ async function tocarMusica(message, query) {
   const node = [...client.shoukaku.nodes.values()][0];
   if (!node) return message.reply('⚠️ Nenhum node Lavalink disponível.');
 
-  // Nova forma de resolver músicas no Shoukaku v4
+  // Resolve a música com o Shoukaku v4
   const result = await node.rest.resolve(query);
   const tracks = result?.data || [];
 

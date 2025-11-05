@@ -1,10 +1,11 @@
+// lavalink.js
 import { Shoukaku, Connectors } from 'shoukaku';
 
 const LavalinkNodes = [
   {
     name: 'main',
     url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    auth: process.env.LAVALINK_PASSWORD, // 🔥 CORRIGIDO (antes era authorization)
+    authorization: process.env.LAVALINK_PASSWORD, // 🔥 nome correto
     secure: process.env.LAVALINK_SECURE === 'true'
   }
 ];
