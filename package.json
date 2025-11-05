@@ -1,25 +1,16 @@
 {
   "name": "marcinho-bot",
   "version": "2.2.0",
-  "description": "Bot de música estilo Jockie, identidade do Marcinho, usando Lavalink.",
   "type": "module",
   "main": "src/index.js",
-  "engines": {
-    "node": ">=20.0.0"
-  },
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "start": "node src/index.js"
   },
   "dependencies": {
-    "@discordjs/rest": "^2.4.0",
-    "@discordjs/voice": "^0.16.1",
-    "discord-api-types": "^0.37.83",
     "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5",
-    "erela.js": "^2.4.0",
-    "erela.js-spotify": "^1.2.0",
+    "@discordjs/voice": "^0.17.0",
+    "node-fetch": "^3.3.2",
     "express": "^4.19.2",
-    "undici": "^6.19.8"
+    "dotenv": "^16.4.5"
   }
 }
