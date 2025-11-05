@@ -1,7 +1,7 @@
 {
   "name": "marcinho-bot",
-  "version": "2.2.0",
-  "description": "Bot do Marcinho 🍺",
+  "version": "2.4.0",
+  "description": "Bot do Marcinho 🍻",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -11,6 +11,7 @@
     "discord.js": "^14.15.3",
     "@discordjs/voice": "^0.16.1",
     "@distube/ytdl-core": "^4.13.3",
+    "ytsr": "^3.8.0",
     "express": "^4.19.2",
     "dotenv": "^16.4.5"
   },
