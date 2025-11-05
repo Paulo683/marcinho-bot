@@ -1,112 +1,182 @@
 import 'dotenv/config';
-import { Client, GatewayIntentBits, EmbedBuilder } from 'discord.js';
-import { Shoukaku, Connectors } from 'shoukaku';
+import {
+  Client,
+  GatewayIntentBits,
+  EmbedBuilder
+} from 'discord.js';
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  getVoiceConnection
+} from '@discordjs/voice';
+import * as play from 'play-dl';
 
+// Inicializa o cliente
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildVoiceStates
-  ]
+  ],
 });
 
-// Configuração do Lavalink
-const Nodes = [
-  {
-    name: 'MarcinhoLava',
-    url: `${process.env.LAVALINK_HOST}:${process.env.LAVALINK_PORT}`,
-    auth: process.env.LAVALINK_PASSWORD
-  }
-];
-
-// Inicializa o Shoukaku
-client.shoukaku = new Shoukaku(new Connectors.DiscordJS(client), Nodes);
-
-client.shoukaku.on('ready', (name) => {
-  console.log(`✅ Node ${name} conectado com sucesso!`);
-});
-
-client.shoukaku.on('error', (name, error) => {
-  console.error(`❌ Erro no node ${name}:`, error);
-});
+const queues = new Map(); // guildId -> { connection, player, songs[], nowPlaying }
 
 client.once('ready', () => {
-  console.log(`🍻 Marcinho online como ${client.user.tag}!`);
+  console.log(`🍺 Marcinho online como ${client.user.tag}!`);
 });
 
-// Função pra tocar música
-async function tocarMusica(message, query) {
-  const voiceChannel = message.member?.voice?.channel;
-  if (!voiceChannel) return message.reply('🎧 Entra num canal de voz primeiro, abestado!');
+// Autoriza o play-dl com o YouTube
+(async () => {
+  try {
+    await play.authorization();
+    console.log('✅ Autorização YouTube feita com sucesso!');
+  } catch (e) {
+    console.error('⚠️ Erro ao autorizar o YouTube:', e);
+  }
+})();
 
-  const node = [...client.shoukaku.nodes.values()][0];
-  const result = await node.rest.resolve(query);
+// Função pra tocar a próxima da fila
+async function playNext(guildId, channel) {
+  const q = queues.get(guildId);
+  if (!q) return;
 
-  if (!result || !result.tracks.length) {
-    return message.reply('❌ Não encontrei nada com esse nome aí.');
+  const song = q.songs.shift();
+  if (!song) {
+    q.player.stop();
+    const conn = getVoiceConnection(guildId);
+    if (conn) conn.destroy();
+    queues.delete(guildId);
+    channel.send('📭 Fila acabou. Fui pegar outra gelada 🍺');
+    return;
   }
 
-  const track = result.tracks[0];
-  const player = await node.joinChannel({
-    guildId: message.guild.id,
-    channelId: voiceChannel.id,
-    shardId: 0,
-    deaf: true
-  });
+  try {
+    const stream = await play.stream(song.url, { quality: 2 });
+    const resource = createAudioResource(stream.stream, { inputType: stream.type });
+    q.player.play(resource);
+    q.nowPlaying = song;
 
-  player.on('end', () => {
-    message.channel.send('🍺 Acabou a música... partiu mais uma!');
-    node.leaveChannel(message.guild.id);
-  });
+    const embed = new EmbedBuilder()
+      .setColor(0xff6600)
+      .setTitle('🎶 Tocando Agora!')
+      .setDescription(`**${song.title}**\nPedido por **${song.user}**`)
+      .setURL(song.url)
+      .setThumbnail(song.thumbnail || null);
 
-  await player.playTrack({ track: track.track });
-
-  const embed = new EmbedBuilder()
-    .setColor(0xffcc00)
-    .setTitle('🎵 Tocando Agora!')
-    .setDescription(`**${track.info.title}**\nPedido por **${message.author.username}**`)
-    .setURL(track.info.uri)
-    .setThumbnail(track.info.artworkUrl || null);
-
-  message.reply({ embeds: [embed] });
+    channel.send({ embeds: [embed] });
+  } catch (err) {
+    console.error('Erro tocando stream:', err);
+    playNext(guildId, channel);
+  }
 }
 
-// Sistema de comandos
+// Comandos
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+  const content = message.content.trim();
 
-  const [cmd, ...args] = message.content.split(' ');
-  const query = args.join(' ');
+  // !play <termo ou link>
+  if (content.startsWith('!play')) {
+    const args = content.split(' ').slice(1);
+    const query = args.join(' ');
+    if (!query) return message.reply('⚠️ Fala o nome ou link, jamanta azul.');
 
-  if (cmd === '!play') {
-    if (!query) return message.reply('⚠️ Fala o nome ou link da música, jamanta azul.');
+    const voice = message.member?.voice?.channel;
+    if (!voice) return message.reply('🎧 Entra num canal de voz primeiro!');
+
+    let q = queues.get(message.guild.id);
+    if (!q) {
+      const connection = joinVoiceChannel({
+        channelId: voice.id,
+        guildId: message.guild.id,
+        adapterCreator: message.guild.voiceAdapterCreator
+      });
+      const player = createAudioPlayer();
+      connection.subscribe(player);
+      player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id, message.channel));
+      q = { connection, player, songs: [], nowPlaying: null };
+      queues.set(message.guild.id, q);
+    }
+
     try {
-      await tocarMusica(message, query);
+      let info;
+      if (play.yt_validate(query) === 'video') {
+        info = await play.video_basic_info(query);
+      } else {
+        const results = await play.search(query, { limit: 1 });
+        if (!results.length) return message.reply('❌ Não achei essa música.');
+        info = results[0];
+      }
+
+      const title = info.title || info.video_details?.title || 'Música';
+      const url = info.url || info.video_details?.url;
+      const thumbnail = info.thumbnails?.[0]?.url || info.video_details?.thumbnails?.[0]?.url;
+
+      q.songs.push({ title, url, thumbnail, user: message.author.username });
+
+      const embed = new EmbedBuilder()
+        .setColor(0xffcc00)
+        .setTitle('🎵 Adicionado à Fila!')
+        .setDescription(`**${title}**\nPedido por **${message.author.username}**`)
+        .setThumbnail(thumbnail || null);
+
+      await message.reply({ embeds: [embed] });
+
+      if (q.player.state.status !== AudioPlayerStatus.Playing && !q.nowPlaying) {
+        playNext(message.guild.id, message.channel);
+      }
     } catch (e) {
-      console.error('Erro ao tocar:', e);
-      message.reply('😵‍💫 Deu ruim pra tocar isso aí.');
+      console.error('Erro em !play:', e);
+      message.reply('😵‍💫 Deu ruim pra achar/tocar isso aí.');
     }
   }
 
-  if (cmd === '!stop') {
-    const node = [...client.shoukaku.nodes.values()][0];
-    const player = node.players.get(message.guild.id);
-    if (player) {
-      player.stopTrack();
-      node.leaveChannel(message.guild.id);
-      message.reply('🛑 Parei e vazei da call.');
-    } else {
-      message.reply('❌ Nem tava tocando nada.');
-    }
+  // !skip
+  if (content === '!skip') {
+    const q = queues.get(message.guild.id);
+    if (!q) return message.reply('❌ Não tem nada pra pular.');
+    message.reply('⏭️ Pulando!');
+    playNext(message.guild.id, message.channel);
   }
 
-  if (cmd === '!help') {
+  // !stop
+  if (content === '!stop') {
+    const q = queues.get(message.guild.id);
+    if (!q) return message.reply('❌ Nem tava tocando nada.');
+    q.songs.length = 0;
+    q.player.stop();
+    const conn = getVoiceConnection(message.guild.id);
+    if (conn) conn.destroy();
+    queues.delete(message.guild.id);
+    message.reply('🛑 Parei e vazei da call.');
+  }
+
+  // !lista
+  if (content === '!lista') {
+    const q = queues.get(message.guild.id);
+    if (!q || (!q.nowPlaying && q.songs.length === 0)) {
+      return message.reply('📭 A fila tá vazia.');
+    }
+    let out = '🎧 **Fila do Marcinho:**\n';
+    if (q.nowPlaying) out += `**Tocando:** ${q.nowPlaying.title}\n`;
+    if (q.songs.length) {
+      out += q.songs.map((s, i) => `**${i + 1}.** ${s.title} — pedido por *${s.user}*`).join('\n');
+    }
+    message.reply(out);
+  }
+
+  // !help
+  if (content === '!help') {
     message.reply(
       '🍺 **Comandos do Marcinho**\n' +
-      '• `!play <nome ou link>` — Toca a música\n' +
-      '• `!stop` — Para e sai do canal\n' +
-      '• `!help` — Mostra este menu'
+      '• `!play <nome ou link>`\n' +
+      '• `!skip`\n' +
+      '• `!stop`\n' +
+      '• `!lista`\n'
     );
   }
 });
