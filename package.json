@@ -1,21 +1,25 @@
 {
   "name": "marcinho-bot",
-  "version": "2.4.0",
-  "description": "Bot do Marcinho 🍻",
-  "main": "src/index.js",
+  "version": "2.2.0",
+  "description": "Bot de música estilo Jockie, identidade do Marcinho, usando Lavalink.",
   "type": "module",
-  "scripts": {
-    "start": "node src/index.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.15.3",
-    "@discordjs/voice": "^0.16.1",
-    "@distube/ytdl-core": "^4.13.3",
-    "ytsr": "^3.8.0",
-    "express": "^4.19.2",
-    "dotenv": "^16.4.5"
-  },
+  "main": "src/index.js",
   "engines": {
     "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@discordjs/rest": "^2.4.0",
+    "@discordjs/voice": "^0.16.1",
+    "discord-api-types": "^0.37.83",
+    "discord.js": "^14.15.3",
+    "dotenv": "^16.4.5",
+    "erela.js": "^2.4.0",
+    "erela.js-spotify": "^1.2.0",
+    "express": "^4.19.2",
+    "undici": "^6.19.8"
   }
 }
